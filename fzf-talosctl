@@ -457,11 +457,139 @@ handle_file_browser() {
     done
 }
 
+# --- Function for Processes Sub-menu ---
+handle_processes() {
+    local sort_key="" # Default to no specific sort
+    local sort_order="" # Default to ascending
+
+    local processes_output
+    processes_output=$(talosctl -n "$NODE_IP" processes 2>/dev/null)
+
+    if [ -z "$processes_output" ]; then
+        echo "Could not retrieve process list from node $NODE_IP." >&2
+        sleep 2
+        return 1
+    fi
+
+    local processes_header
+    processes_header=$(echo "$processes_output" | head -n 1)
+    local processes_data
+    processes_data=$(echo "$processes_output" | tail -n +2)
+
+    while true; do
+        local sort_awk_script=""
+        if [ -n "$sort_key" ]; then
+            # Awk function to convert human-readable memory sizes (e.g., "1.5 GB", "287 MB") to bytes
+            # SC2016: Expressions don't expand in single quotes. This is intentional for awk.
+            # shellcheck disable=SC2016
+            sort_awk_script='
+            function convert_to_bytes(val) {
+                # This function converts a string like "1.5 GB" or "287 MB" to bytes.
+                # It is designed to be POSIX-compliant and robust.
+
+                # Default to 0 if input is invalid
+                num = 0;
+                multiplier = 1;
+
+                # Use match() to find the start of the unit (the first letter).
+                # RSTART is a built-in variable set by match().
+                if (match(val, /[a-zA-Z]/)) {
+                    unit_start_pos = RSTART;
+                    # The numeric part is everything before the unit.
+                    num_str = substr(val, 1, unit_start_pos - 1);
+                    # The unit is everything from the first letter to the end.
+                    unit_str = substr(val, unit_start_pos);
+
+                    # Convert the numeric string to a number (the `+ 0` is a standard awk trick).
+                    num = num_str + 0;
+
+                    # Determine the multiplier based on the first letter of the unit, case-insensitively.
+                    if (unit_str ~ /^[kK]/) multiplier = 1024;
+                    else if (unit_str ~ /^[mM]/) multiplier = 1024 * 1024;
+                    else if (unit_str ~ /^[gG]/) multiplier = 1024 * 1024 * 1024;
+                    else if (unit_str ~ /^[tT]/) multiplier = 1024 * 1024 * 1024 * 1024;
+                } else {
+                    # No unit found, so the whole string is the number.
+                    num = val + 0;
+                }
+
+                return num * multiplier;
+            }
+            {
+                sort_val = "";
+                if (sort_key == "pid") sort_val = $2;
+                else if (sort_key == "threads") sort_val = $4;
+                else if (sort_key == "cpu_time") sort_val = $5;
+                # The memory columns are split by awk due to the space (e.g., "1.5 GB").
+                # We must concatenate them back together before converting to bytes.
+                else if (sort_key == "virtmem") sort_val = convert_to_bytes($6 " " $7);
+                else if (sort_key == "resmem") sort_val = convert_to_bytes($8 " " $9);
+
+                print sort_val "\t" $0;
+            }'
+        fi
+
+        local sorted_data
+        if [ -n "$sort_key" ]; then
+            # The awk script prepends the correct value for sorting. Pass shell variables to awk.
+            # We then sort on that prepended value (k1,1) and then remove it with cut.
+            # Use `sort -g` for general numeric sort (handles floats and large numbers).
+            sorted_data=$(echo "$processes_data" | awk -v sort_key="$sort_key" "$sort_awk_script" | command sort -k1,1g${sort_order} | cut -f2-)
+        else
+            sorted_data="$processes_data" # No sort applied
+        fi
+
+        local marked_header="$processes_header"
+        if [ -n "$sort_key" ]; then # Only mark header if a sort key is active
+            local sort_indicator=" ▲" # ascending
+            [ "$sort_order" = "r" ] && sort_indicator=" ▼" # descending
+
+            case "$sort_key" in
+                "pid")       marked_header="${processes_header//PID/PID$sort_indicator}" ;;
+                "threads")   marked_header="${processes_header//THREADS/THREADS$sort_indicator}" ;;
+                "cpu_time")  marked_header="${processes_header//CPU-TIME/CPU-TIME$sort_indicator}" ;;
+                "virtmem")   marked_header="${processes_header//VIRTMEM/VIRTMEM$sort_indicator}" ;;
+                "resmem")    marked_header="${processes_header//RESMEM/RESMEM$sort_indicator}" ;;
+            esac
+        fi
+
+        local header="[Ctrl-P] PID | [Ctrl-T] THREADS | [Ctrl-C] CPU-TIME | [Ctrl-V] VIRTMEM | [Ctrl-R] RESMEM | Sort: $sort_key $sort_order | ESC to return"
+        local full_header
+        full_header=$(printf "%s\n%s" "$marked_header" "$header")
+        local output
+
+        set +e # Temporarily disable exit-on-error for the interactive fzf command
+        output=$(printf "%s\n" "$sorted_data" | fzf \
+            --prompt="Processes > " \
+            --header="$full_header" \
+            --header-first \
+            --expect="ctrl-p,ctrl-t,ctrl-c,ctrl-v,ctrl-r" \
+            --no-sort \
+            --wrap \
+            --exact)
+        local exit_code=$?
+        set -e # Re-enable exit-on-error
+        local key_pressed
+        key_pressed=$(echo "$output" | head -n1)
+        if [ "$exit_code" -ne 0 ]; then return 0; fi # User pressed Esc or Ctrl-C
+
+        # Update sort key and order
+        case "$key_pressed" in
+            'ctrl-p') if [ "$sort_key" = "pid" ]; then [ -z "$sort_order" ] && sort_order="r" || sort_order=""; else sort_key="pid"; sort_order=""; fi ;;
+            'ctrl-t') if [ "$sort_key" = "threads" ]; then [ -z "$sort_order" ] && sort_order="r" || sort_order=""; else sort_key="threads"; sort_order=""; fi ;;
+            'ctrl-c') if [ "$sort_key" = "cpu_time" ]; then [ -z "$sort_order" ] && sort_order="r" || sort_order=""; else sort_key="cpu_time"; sort_order=""; fi ;;
+            'ctrl-v') if [ "$sort_key" = "virtmem" ]; then [ -z "$sort_order" ] && sort_order="r" || sort_order=""; else sort_key="virtmem"; sort_order=""; fi ;;
+            'ctrl-r') if [ "$sort_key" = "resmem" ]; then [ -z "$sort_order" ] && sort_order="r" || sort_order=""; else sort_key="resmem"; sort_order=""; fi ;;
+            *) return 0 ;; # Enter was pressed on a line, or unhandled key
+        esac
+    done
+}
+
 
 # --- Main Menu Loop ---
 while true;
 do
-    options="Services - Status\nServices - Logs\nNetstat\nMounts\nFile browser\nDmesg\nDashboard (type 'q' to exit)\nContainers - Status\nContainers - Logs\n[Exit]"
+    options="Services - Status\nServices - Logs\nNetstat\nProcesses\nMounts\nFile browser\nDmesg\nDashboard (type 'q' to exit)\nContainers - Status\nContainers - Logs\n[Exit]"
     set +e # Temporarily disable exit-on-error for the interactive fzf command
     selected_action=$(printf "%b" "$options" | fzf --prompt="Talos ($NODE_IP) > " --header="[Enter] to select, [Ctrl-C] or select '[Exit]' to quit" --height=~60% --no-sort)
     set -e # Re-enable exit-on-error
@@ -477,6 +605,7 @@ do
         "File browser") handle_file_browser ;;
         "Containers - Logs") handle_container_logs ;;
         "Services - Logs") handle_service_logs ;;
+        "Processes") handle_processes ;;
         "Mounts")
           set +e
           (set +o pipefail; talosctl -n "$NODE_IP" mounts | fzf --prompt="Filter mounts: " --header-lines=1 --header="Tip: start with ' for exact search | [ESC] to return")

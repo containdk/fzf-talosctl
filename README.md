@@ -22,6 +22,10 @@
     *   View detailed network connection status (`netstat -alkpvx`).
     *   Sort by Proto, Local/Foreign Address, State, UID, Program, and Pod.
     *   Handles inconsistent column output between TCP and UDP connections.
+*   **Interactive Process Viewer**:
+    *   View running processes from `talosctl processes`.
+    *   Sort by PID, Threads, CPU Time, Virtual Memory, and Resident Memory.
+    *   Correctly handles memory units (e.g., GB, MB, kB) for accurate sorting.
 *   **Directory Tree Browser**:
     *   Navigate the node's filesystem.
     *   Sort files and directories by name (`Ctrl+N`) or size (`Ctrl+S`).
@@ -124,6 +128,16 @@ The tables below detail *additional* keybindings specific to each view.
 | `Ctrl+U` | Sort by UID |
 | `Ctrl+G` | Sort by Program |
 | `Ctrl+P` | Sort by Pod |
+| `ESC` | Return to the main menu |
+
+#### Processes Viewer
+| Key | Action |
+|---|---|
+| `Ctrl-P` | Sort by PID |
+| `Ctrl-T` | Sort by Threads |
+| `Ctrl-C` | Sort by CPU Time |
+| `Ctrl-V` | Sort by Virtual Memory |
+| `Ctrl-R` | Sort by Resident Memory |
 | `ESC` | Return to the main menu |
 
 ## License
