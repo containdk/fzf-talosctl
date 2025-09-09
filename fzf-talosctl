@@ -4,7 +4,7 @@ set -euo pipefail
 
 # --- Dependency Checks ---
 # Ensure necessary command-line tools are installed before proceeding.
-for cmd in talosctl kubectl fzf; do
+for cmd in talosctl kubectl fzf stdbuf; do
     if ! command -v "$cmd" &> /dev/null;
  then
         echo "Error: Required command '$cmd' is not installed." >&2
@@ -57,19 +57,28 @@ _view_streaming_logs() {
     shift
     local talos_cmd=("$@")
 
-    # A direct pipeline is simpler and often more reliable for fzf's --track feature.
-    # When fzf exits, the `talosctl` command will receive a SIGPIPE and terminate,
-    # which is the standard, expected behavior for shell pipelines.
+    # Start the log command as a managed coprocess. `stdbuf -o0` disables
+    # output buffering, ensuring logs appear in fzf immediately.
+    # When fzf exits (e.g., via ESC), the `talosctl` process in the pipeline
+    # does not always terminate correctly, causing the script to hang.
+    # Using a coprocess with an explicit `trap` ensures it is always killed.
+    coproc TALOS_LOGS { stdbuf -o0 "${talos_cmd[@]}"; }
+
+    # Run fzf, reading its input from the coprocess's output stream.
     set +e # Temporarily disable exit-on-error for the interactive fzf command
-    (set +o pipefail; "${talos_cmd[@]}") | fzf --prompt="$prompt" \
+    fzf --prompt="$prompt" \
         --no-sort \
         --tac \
         --wrap \
         --exact \
         --header="[Ctrl-J] Jump to newest | [Ctrl-T] Track/NoTrack | ESC to return" \
         --no-track \
-        --bind 'ctrl-j:top,ctrl-t:toggle-track'
+        --bind 'ctrl-j:top,ctrl-t:toggle-track' <&"${TALOS_LOGS[0]}"
     set -e # Re-enable exit-on-error
+
+    # Manually kill the background log process after fzf exits. This is more explicit
+    # and robust than using a `trap` on RETURN, which was causing navigation issues.
+    kill "${TALOS_LOGS_PID}" &>/dev/null
 }
 
 # --- Function for Service Logs Sub-menu ---
@@ -84,21 +93,21 @@ handle_service_logs() {
       return 1
     fi
 
-    # Add "Back" and "Exit" options to the list
-    service_options="[Back]\n$service_list"
+    # Remove "[Back]" option, rely on ESC for returning
+    service_options="$service_list"
 
     set +e # Temporarily disable exit-on-error for the interactive fzf command
-    selected_service=$(printf "%b" "$service_options" | fzf --prompt="Logs (service) > " --header="[Enter] to select, [Ctrl-C] or select '[Back]' to return" --no-sort)
+    selected_service=$(printf "%b" "$service_options" | fzf --prompt="Logs (service) > " --header="[Enter] to select | [ESC] to return" --no-sort)
     set -e # Re-enable exit-on-error
 
-    case "$selected_service" in
-      "[Back]" | "")
-        return 0
-        ;;
-      *)
-        _view_streaming_logs "Logs ($selected_service) > " talosctl -n "$NODE_IP" logs --follow "$selected_service"
-        ;;
-    esac
+    if [ -z "$selected_service" ]; then
+      # User pressed ESC, so we break the loop and return to the main menu.
+      break
+    fi
+
+    # A service was selected, view its logs.
+    # After viewing, the loop will continue, re-displaying the service list.
+    _view_streaming_logs "Logs ($selected_service) > " talosctl -n "$NODE_IP" logs --follow "$selected_service"
   done
 }
 
@@ -116,66 +125,55 @@ handle_container_logs() {
       return 1
     fi
 
-    # Add "Back" and "Exit" options
-    container_options="[Back]\n$container_list"
+    # Remove "[Back]" option, rely on ESC for returning
+    container_options="$container_list"
     fzf_header=$(echo "$container_output" | head -n 1)
 
     set +e # Temporarily disable exit-on-error for the interactive fzf command
-    selected_line=$(printf "%b" "$container_options" | fzf --prompt="Logs (container) > " --header="$fzf_header" --header-first --no-sort)
+    selected_line=$(printf "%b" "$container_options" | fzf --prompt="Logs (container) > " --header="$fzf_header | [ESC] to return" --no-sort)
     set -e # Re-enable exit-on-error
+    
+    if [ -z "$selected_line" ]; then
+      # User pressed ESC, so we break the loop and return to the main menu.
+      break
+    fi
 
-    case "$selected_line" in
-      "[Back]" | "")
-        return 0
-        ;;
-      *)
-        # The container ID is the 4th field in the line.
-        container_id=$(echo "$selected_line" | awk '{print $4}')
-        # The container name is the 3rd field.
-        container_name=$(echo "$selected_line" | awk '{print $3}')
-        _view_streaming_logs "Logs ($container_name) > " talosctl -n "$NODE_IP" logs -k --follow "$container_id"
-        ;;
-    esac
+    # A container was selected, view its logs.
+    # The container ID is the 4th field in the line.
+    container_id=$(echo "$selected_line" | awk '{print $4}')
+    # The container name is the 3rd field.
+    container_name=$(echo "$selected_line" | awk '{print $3}')
+    _view_streaming_logs "Logs ($container_name) > " talosctl -n "$NODE_IP" logs -k --follow "$container_id"
   done
 }
 
 # --- Function for Containers Sub-menu ---
 handle_containers() {
     while true; do
-        local options="Kubernetes Containers\nSystem Containers\n[Back]"
+        local options="Kubernetes Containers\nSystem Containers" # Removed "[Back]", rely on ESC
         local selected_view
 
         set +e # Temporarily disable exit-on-error for the interactive fzf command
-        selected_view=$(printf "%b" "$options" | fzf --prompt="Container View > " --header="[Enter] to select, [ESC] to go back" --no-sort)
+        selected_view=$(printf "%b" "$options" | fzf --prompt="Container View > " --header="[Enter] to select | [ESC] to return to main menu" --no-sort)
         local exit_code=$?
         set -e # Re-enable exit-on-error
 
         if [ "$exit_code" -ne 0 ]; then # User pressed ESC or Ctrl-C
             return 0
-        fi
+        fi # This now handles the "back" action for this menu
 
         case "$selected_view" in
             "Kubernetes Containers")
-                set +e # Temporarily disable exit-on-error for the interactive fzf command
-                (set +o pipefail; talosctl -n "$NODE_IP" containers -k | fzf --prompt="K8s Containers > " --header-lines=1 --header="[ESC] back")
-                local exit_code=$?
-                set -e # Re-enable exit-on-error
-                if [ "$exit_code" -ne 0 ]; then
-                    # User pressed ESC, return to main menu.
-                    return 0
-                fi
+                set +e
+                (set +o pipefail; talosctl -n "$NODE_IP" containers -k | fzf --prompt="K8s Containers > " --header-lines=1 --header="[ESC] to return")
+                set -e
                 ;;
             "System Containers")
-                set +e # Temporarily disable exit-on-error for the interactive fzf command
-                (set +o pipefail; talosctl -n "$NODE_IP" containers | fzf --prompt="System Containers > " --header-lines=1 --header="[ESC] back")
-                local exit_code=$?
-                set -e # Re-enable exit-on-error
-                if [ "$exit_code" -ne 0 ]; then
-                    # User pressed ESC, return to main menu.
-                    return 0
-                fi
+                set +e
+                (set +o pipefail; talosctl -n "$NODE_IP" containers | fzf --prompt="System Containers > " --header-lines=1 --header="[ESC] to return")
+                set -e
                 ;;
-            "[Back]") return 0 ;;
+            "") return 0 ;; # Should not be reached if exit_code handles ESC
         esac
     done
 }
@@ -208,7 +206,7 @@ handle_dmesg() {
             sorted_log="$dmesg_log"
         fi
 
-        local header="[Ctrl-J] Jump to newest | [Ctrl-T] Sort Time | [Ctrl-S] Sort Severity | Sort: $sort_key $sort_order"
+        local header="[ESC] return | [Ctrl-J] newest | [Ctrl-T] sort time | [Ctrl-S] sort severity | Sort: $sort_key $sort_order"
         local output
         local fzf_opts=(
             --prompt="Dmesg > "
@@ -419,7 +417,7 @@ handle_file_browser() {
 
     while true;
     do
-        local header="[Enter] select | [Ctrl-N] name | [Ctrl-S] size | Sort: $sort_key $sort_order"
+        local header="[Enter] select | [ESC] back | [Ctrl-N] name | [Ctrl-S] size | Sort: $sort_key $sort_order"
         local file_list
         file_list=$(_get_file_list "$current_path" "$sort_key" "$sort_order")
 
@@ -435,7 +433,7 @@ handle_file_browser() {
         fi
 
         # Display ".." at the top and "[Exit]" at the very bottom of the list.
-        local options="..\n$file_list\n[Exit]"
+        local options="..\n$file_list" # Removed "[Exit]", rely on ESC from root for main menu
         local output
         
         export -f _get_item_name
@@ -457,7 +455,7 @@ handle_file_browser() {
         selected_item=$(echo "$output" | tail -n +2)
 
         if [ "$exit_code" -ne 0 ]; then
-            # User pressed Esc or Ctrl-C, treat as "Back"
+            # User pressed Esc or Ctrl-C
             if [ "$current_path" = "/" ]; then
                 return 0
             fi
@@ -486,12 +484,8 @@ handle_file_browser() {
                     if [ "$current_path" = "/" ]; then
                         return 0
                     else
-                        current_path=$(dirname "$current_path")
+                        current_path=$(dirname "$current_path") # Go up one directory
                     fi
-                    ;;
-                "[Exit]")
-                    echo "Exiting."
-                    exit 0
                     ;;
                 *) 
                     local item_type
@@ -543,7 +537,7 @@ do
         "Services - Logs") handle_service_logs ;;
         "Mounts")
           set +e
-          (set +o pipefail; talosctl -n "$NODE_IP" mounts | fzf --prompt="Filter mounts: " --header-lines=1 --header="Tip: start with ' for exact search | ESC exit")
+          (set +o pipefail; talosctl -n "$NODE_IP" mounts | fzf --prompt="Filter mounts: " --header-lines=1 --header="Tip: start with ' for exact search | [ESC] to return")
           set -e
           ;;
         "Netstat")
@@ -556,7 +550,7 @@ do
           (set +o pipefail; talosctl -n "$NODE_IP" services | fzf \
             --prompt="Services > " \
             --header-lines=1 \
-            --header="[ESC] back" \
+            --header="[ESC] to return" \
             --preview="talosctl -n \"$NODE_IP\" services \$(echo {} | awk '{print \$2}') status 2>/dev/null" \
             --preview-window="right,70%,wrap")
           set -e
