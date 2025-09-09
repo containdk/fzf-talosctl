@@ -12,9 +12,9 @@
     *   New logs appear at the top for easy viewing.
     *   Jump to the newest log entry with `Ctrl+J`.
     *   Toggle log tracking on and off with `Ctrl+T`.
-*   **Interactive `dmesg` Viewer**:
-    *   Sort kernel messages by time (`Ctrl+T`) or severity (`Ctrl+S`).
+*   **Live `dmesg` Streaming**: View kernel messages in real-time, just like other logs.
     *   Jump to the newest entry with `Ctrl+J`.
+    *   Toggle log tracking on and off with `Ctrl+T`.
 *   **Service Status with Preview**: Browse services and see their detailed status and events in a live preview pane.
 *   **Dual Container Views**: Separately view Kubernetes-managed containers and Talos system containers.
 *   **Advanced `netstat` Viewer**:
@@ -33,6 +33,7 @@ Before using `fzf-talosctl`, make sure you have the following command-line tools
 *   `talosctl`
 *   `kubectl`
 *   `fzf`
+*   `stdbuf` (part of `coreutils`)
 
 ## Installation
 
@@ -76,8 +77,7 @@ This script makes extensive use of `fzf` keybindings for interaction.
 | Key | Action |
 |---|---|
 | `Ctrl+J` | Jump to newest log entry (top of the list) |
-| `Ctrl+T` | Sort by Time (toggle asc/desc) |
-| `Ctrl+S` | Sort by Severity (toggle asc/desc) |
+| `Ctrl+T` | Toggle log tracking on/off |
 | `ESC` | Return to the main menu |
 
 #### File Browser
