@@ -8,6 +8,7 @@
 
 *   **Interactive Node Selection**: If no node IP is provided, the script interactively prompts you to select a node from your current `kubectl` context.
 *   **Comprehensive Main Menu**: A clean, organized menu to access various `talosctl` functions.
+*   **Powerful Interactive Filtering**: Leverages `fzf` to provide instant fuzzy finding (just start typing) and exact-match searching (prefix with `'`).
 *   **Live Log Streaming**: View logs for services and containers in real-time.
     *   New logs appear at the top for easy viewing.
     *   Jump to the newest log entry with `Ctrl+J`.
@@ -62,9 +63,34 @@ There are two ways to run the script:
     ./fzf-talosctl 10.55.0.2
     ```
 
+## Integration with K9s
+
+You can easily integrate `fzf-talosctl` into K9s as a node-level plugin. This allows you to select a node in K9s and press `t` to launch an interactive session for that specific node.
+
+1.  Find your K9s `plugins.yaml` file by running `k9s info`.
+2.  Add the following block to your `plugins.yaml`:
+
+    ```yaml
+    talos-interactive:
+      shortCut: t
+      description: "Talos: Interactive session"
+      scopes:
+        - nodes
+      command: fzf-talosctl
+      background: false
+      args:
+        - $COL-INTERNAL-IP
+    ```
+
 ## Keybindings
 
-This script makes extensive use of `fzf` keybindings for interaction.
+In addition to the powerful filtering capabilities mentioned in the Features section, `fzf-talosctl` uses a consistent set of keys for navigation:
+
+*   **Navigate**: Use `Up`/`Down` arrows, `Ctrl-P`/`Ctrl-N`, or `Ctrl-J`/`Ctrl-K`.
+*   **Select**: Press `Enter`.
+*   **Go Back / Cancel**: Press `ESC`.
+
+The tables below detail *additional* keybindings specific to each view.
 
 #### Log Viewer (Services/Containers)
 | Key | Action |
