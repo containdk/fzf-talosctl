@@ -180,69 +180,11 @@ handle_containers() {
 
 # --- Function for Dmesg Sub-menu ---
 handle_dmesg() {
-    local sort_key="time"
-    local sort_order="r" # Newest first by default
-
-    # Get the full dmesg log once. No --follow.
-    local dmesg_log
-    # Filter for lines containing a timestamp `[` to handle multi-line entries from talosctl.
-    dmesg_log=$(talosctl -n "$NODE_IP" dmesg 2>/dev/null | grep '\[')
-    if [ -z "$dmesg_log" ]; then
-        echo "Could not retrieve dmesg log from node $NODE_IP." >&2
-        sleep 2
-        return 1
-    fi
-
-    while true; do
-        local sorted_log
-        if [ "$sort_key" = "time" ]; then
-            # Prepend the timestamp to sort, then remove it. Extracts content between [ and ].
-            sorted_log=$(echo "$dmesg_log" | awk -F'[][]' '{print $2 "\t" $0}' | command sort -k1,1${sort_order} | cut -f2-)
-        elif [ "$sort_key" = "severity" ]; then
-            # Prepend severity to sort, then remove it. Extracts 3rd colon-separated field and trims it.
-            sorted_log=$(echo "$dmesg_log" | awk -F: '{gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3 "\t" $0}' | command sort -k1,1${sort_order} | cut -f2-)
-        else
-            # Should not happen, but as a fallback, use original log
-            sorted_log="$dmesg_log"
-        fi
-
-        local header="[ESC] return | [Ctrl-J] newest | [Ctrl-T] sort time | [Ctrl-S] sort severity | Sort: $sort_key $sort_order"
-        local output
-        local fzf_opts=(
-            --prompt="Dmesg > "
-            --header="$header"
-            --header-first
-            --expect="ctrl-t,ctrl-s"
-            --bind='ctrl-j:top'
-            --no-sort
-            --wrap
-            --exact
-        )
-
-        set +e # Temporarily disable exit-on-error for the interactive fzf command
-        output=$(printf "%s\n" "$sorted_log" | fzf "${fzf_opts[@]}")
-        local exit_code=$?
-        set -e # Re-enable exit-on-error
-        local key_pressed
-        key_pressed=$(echo "$output" | head -n1)
-
-        if [ "$exit_code" -ne 0 ]; then
-            # User pressed Esc or Ctrl-C, so return to main menu
-            return 0
-        fi
-
-        case "$key_pressed" in
-            'ctrl-t')
-                if [ "$sort_key" = "time" ]; then [ -z "$sort_order" ] && sort_order="r" || sort_order=""; else sort_key="time"; sort_order="r"; fi
-                ;;
-            'ctrl-s')
-                if [ "$sort_key" = "severity" ]; then [ -z "$sort_order" ] && sort_order="r" || sort_order=""; else sort_key="severity"; sort_order=""; fi
-                ;;
-            *) # Enter was pressed, just exit back to main menu
-                return 0
-                ;;
-        esac
-    done
+    # The dmesg viewer now behaves like the other log viewers, providing a live stream
+    # by using `dmesg --follow`. This replaces the previous static, sortable view.
+    # The interactive sorting feature is not compatible with a live stream in this
+    # script's architecture, but the new behavior is consistent with other log views.
+    _view_streaming_logs "Dmesg > " talosctl -n "$NODE_IP" dmesg --follow
 }
 
 # --- Function for Netstat Sub-menu ---
