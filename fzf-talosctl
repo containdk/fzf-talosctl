@@ -225,7 +225,8 @@ handle_dmesg() {
         output=$(printf "%s\n" "$sorted_log" | fzf "${fzf_opts[@]}")
         local exit_code=$?
         set -e # Re-enable exit-on-error
-        local key_pressed=$(echo "$output" | head -n1)
+        local key_pressed
+        key_pressed=$(echo "$output" | head -n1)
 
         if [ "$exit_code" -ne 0 ]; then
             # User pressed Esc or Ctrl-C, so return to main menu
@@ -263,14 +264,17 @@ handle_netstat() {
 
     # Extract header and data lines. Data lines will have inconsistent column counts.
     # The sorting logic will dynamically handle column extraction based on protocol.
-    local netstat_header=$(echo "$netstat_output" | head -n 1)
-    local netstat_data=$(echo "$netstat_output" | tail -n +2)
+    local netstat_header
+    netstat_header=$(echo "$netstat_output" | head -n 1)
+    local netstat_data
+    netstat_data=$(echo "$netstat_output" | tail -n +2)
 
     while true; do
         # Build an awk script to prepend the correct sort value based on protocol.
         # This handles the inconsistent column counts between TCP and UDP.
         local sort_awk_script=""
         if [ -n "$sort_key" ]; then
+            # shellcheck disable=SC2016
             sort_awk_script='{
                 proto = $2;
                 sort_val = "";
@@ -284,13 +288,13 @@ handle_netstat() {
                 }
 
                 # Extract the value based on the requested sort_key and adjusted column indices
-                if ("'"$sort_key"'" == "proto") sort_val = $2;
-                else if ("'"$sort_key"'" == "local_address") sort_val = $5;
-                else if ("'"$sort_key"'" == "foreign_address") sort_val = $6;
-                else if ("'"$sort_key"'" == "state") { if (proto == "udp" || proto == "udp6") sort_val = ""; else sort_val = $col_state; }
-                else if ("'"$sort_key"'" == "uid") sort_val = $col_uid;
-                else if ("'"$sort_key"'" == "program") sort_val = $col_program;
-                else if ("'"$sort_key"'" == "pod") sort_val = $col_pod;
+                if (sort_key == "proto") sort_val = $2;
+                else if (sort_key == "local_address") sort_val = $5;
+                else if (sort_key == "foreign_address") sort_val = $6;
+                else if (sort_key == "state") { if (proto == "udp" || proto == "udp6") sort_val = ""; else sort_val = $col_state; }
+                else if (sort_key == "uid") sort_val = $col_uid;
+                else if (sort_key == "program") sort_val = $col_program;
+                else if (sort_key == "pod") sort_val = $col_pod;
 
                 print sort_val "\t" $0;
             }'
@@ -298,9 +302,10 @@ handle_netstat() {
 
         local sorted_data
         if [ -n "$sort_key" ]; then
-            # The awk script prepends the correct value for sorting.
+            # The awk script prepends the correct value for sorting. Pass shell variables to awk.
             # We then sort on that prepended value (k1,1) and then remove it with cut.
-            sorted_data=$(echo "$netstat_data" | awk "$sort_awk_script" | command sort -k1,1${sort_order} | cut -f2-)
+            sorted_data=$(echo "$netstat_data" | awk -v sort_key="$sort_key" -v sort_order="$sort_order" \
+                "$sort_awk_script" | command sort -k1,1${sort_order} | cut -f2-)
         else
             sorted_data="$netstat_data" # No sort applied
         fi
@@ -310,14 +315,14 @@ handle_netstat() {
             local sort_indicator=" ▲" # ascending
             [ "$sort_order" = "r" ] && sort_indicator=" ▼" # descending
 
-            case "$sort_key" in
-                "proto")           marked_header=$(echo "$netstat_header" | sed "s/Proto/Proto$sort_indicator/") ;;
-                "local_address")   marked_header=$(echo "$netstat_header" | sed "s/Local Address/Local Address$sort_indicator/") ;;
-                "foreign_address") marked_header=$(echo "$netstat_header" | sed "s/Foreign Address/Foreign Address$sort_indicator/") ;;
-                "state")           marked_header=$(echo "$netstat_header" | sed "s/State/State$sort_indicator/") ;;
-                "uid")             marked_header=$(echo "$netstat_header" | sed "s/Uid/Uid$sort_indicator/") ;;
-                "program")         marked_header=$(echo "$netstat_header" | sed "s/PID\/Program name/PID\/Program name$sort_indicator/") ;;
-                "pod")             marked_header=$(echo "$netstat_header" | sed "s/Pod/Pod$sort_indicator/") ;;
+            case "$sort_key" in # Use parameter expansion for simple string replacement
+                "proto")           marked_header="${netstat_header//Proto/Proto$sort_indicator}" ;;
+                "local_address")   marked_header="${netstat_header//Local Address/Local Address$sort_indicator}" ;;
+                "foreign_address") marked_header="${netstat_header//Foreign Address/Foreign Address$sort_indicator}" ;;
+                "state")           marked_header="${netstat_header//State/State$sort_indicator}" ;;
+                "uid")             marked_header="${netstat_header//Uid/Uid$sort_indicator}" ;;
+                "program")         marked_header="${netstat_header//PID\/Program name/PID\/Program name$sort_indicator}" ;;
+                "pod")             marked_header="${netstat_header//Pod/Pod$sort_indicator}" ;;
             esac
         fi
 
@@ -337,7 +342,8 @@ handle_netstat() {
             --exact)
         local exit_code=$?
         set -e # Re-enable exit-on-error
-        local key_pressed=$(echo "$output" | head -n1)
+        local key_pressed
+        key_pressed=$(echo "$output" | head -n1)
         if [ "$exit_code" -ne 0 ]; then return 0; fi # User pressed Esc or Ctrl-C
 
         # Update sort key and order (using the dynamic awk script)
@@ -445,8 +451,10 @@ handle_file_browser() {
         set -e # Re-enable exit-on-error
 
         local exit_code=$?
-        local key_pressed=$(echo "$output" | head -n1)
-        local selected_item=$(echo "$output" | tail -n +2)
+        local key_pressed
+        key_pressed=$(echo "$output" | head -n1)
+        local selected_item
+        selected_item=$(echo "$output" | tail -n +2)
 
         if [ "$exit_code" -ne 0 ]; then
             # User pressed Esc or Ctrl-C, treat as "Back"
