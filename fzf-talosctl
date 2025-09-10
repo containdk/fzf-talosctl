@@ -78,6 +78,10 @@ if [ -z "$NODE_IP" ]; then
     exit 1
 fi
 
+# --- Direct Action Determination ---
+# The second argument can be a direct action to jump into a specific menu.
+DIRECT_ACTION="${2-}" # Get the second argument, or empty string if not set.
+
 # --- Generic Log Viewer for Streaming Logs ---
 _view_streaming_logs() {
     local prompt="$1"
@@ -208,6 +212,32 @@ handle_dmesg() {
     # Provides a live stream of kernel messages using 'talosctl dmesg --follow',
     # leveraging the generic streaming log viewer.
     _view_streaming_logs "Dmesg > " talosctl -n "$NODE_IP" dmesg --follow
+}
+
+# --- Function for Dashboard ---
+handle_dashboard() {
+    set +e; talosctl -n "$NODE_IP" dashboard; set -e
+}
+
+# --- Function for Mounts ---
+handle_mounts() {
+    set +e
+    (set +o pipefail; talosctl -n "$NODE_IP" mounts | fzf --prompt="Filter mounts: " --header-lines=1 --header="Tip: start with ' for exact search | [ESC] to return")
+    set -e
+}
+
+# --- Function for Services Status ---
+handle_services_status() {
+    # Use fzf's preview to show the status of the highlighted service.
+    # The preview command extracts the service ID (2nd column) and runs `talosctl services ... status`.
+    set +e
+    (set +o pipefail; talosctl -n "$NODE_IP" services | fzf \
+    --prompt="Services > " \
+    --header-lines=1 \
+    --header="[ESC] to return" \
+    --preview="talosctl -n \"$NODE_IP\" services \$(echo {} | awk '{print \$2}') status 2>/dev/null" \
+    --preview-window="right,70%,wrap")
+    set -e
 }
 
 # --- Function for Netstat Sub-menu ---
@@ -610,46 +640,47 @@ handle_processes() {
 }
 
 
-# --- Main Menu Loop ---
-while true;
-do
-    options="Services - Status\nServices - Logs\nNetstat\nProcesses\nMounts\nFile browser\nDmesg\nDashboard (type 'q' to exit)\nContainers - Status\nContainers - Logs\n[Exit]"
-    set +e # Temporarily disable exit-on-error for the interactive fzf command
-    selected_action=$(printf "%b" "$options" | fzf --prompt="Talos ($NODE_IP) > " --header="[Enter] to select, [Ctrl-C] or select '[Exit]' to quit" --height=~60% --no-sort)
-    set -e # Re-enable exit-on-error
-
-    case "$selected_action" in
-        "Containers - Status")
-          handle_containers
-          ;;
-        "Dashboard (type 'q' to exit)")
-          set +e; talosctl -n "$NODE_IP" dashboard; set -e
-          ;;
-        "Dmesg") handle_dmesg ;;
-        "File browser") handle_file_browser ;;
-        "Containers - Logs") handle_container_logs ;;
-        "Services - Logs") handle_service_logs ;;
-        "Processes") handle_processes ;;
-        "Mounts")
-          set +e
-          (set +o pipefail; talosctl -n "$NODE_IP" mounts | fzf --prompt="Filter mounts: " --header-lines=1 --header="Tip: start with ' for exact search | [ESC] to return")
-          set -e
-          ;;
-        "Netstat")
-          handle_netstat
-          ;;
-        "Services - Status")
-          # Use fzf's preview to show the status of the highlighted service.
-          # The preview command extracts the service ID (2nd column) and runs `talosctl services ... status`.
-          set +e
-          (set +o pipefail; talosctl -n "$NODE_IP" services | fzf \
-            --prompt="Services > " \
-            --header-lines=1 \
-            --header="[ESC] to return" \
-            --preview="talosctl -n \"$NODE_IP\" services \$(echo {} | awk '{print \$2}') status 2>/dev/null" \
-            --preview-window="right,70%,wrap")
-          set -e
-          ;;
-        "[Exit]" | "") exit 0 ;; 
+# --- Main Execution Logic ---
+if [ -n "$DIRECT_ACTION" ]; then
+    # Direct action mode: execute the specified action and exit.
+    case "$DIRECT_ACTION" in
+        "containers") handle_containers ;;
+        "container-logs") handle_container_logs ;;
+        "dashboard") handle_dashboard ;;
+        "dmesg") handle_dmesg ;;
+        "file-browser") handle_file_browser ;;
+        "mounts") handle_mounts ;;
+        "netstat") handle_netstat ;;
+        "processes") handle_processes ;;
+        "service-logs") handle_service_logs ;;
+        "services-status") handle_services_status ;;
+        *)
+            echo "Error: Invalid action '$DIRECT_ACTION'." >&2
+            echo "Valid actions are: containers, container-logs, dashboard, dmesg, file-browser, mounts, netstat, processes, service-logs, services-status" >&2
+            exit 1
+            ;;
     esac
-done
+else
+    # Interactive mode: show the main menu.
+    while true;
+    do
+        options="Services - Status\nServices - Logs\nNetstat\nProcesses\nMounts\nFile browser\nDmesg\nDashboard (type 'q' to exit)\nContainers - Status\nContainers - Logs\n[Exit]"
+        set +e # Temporarily disable exit-on-error for the interactive fzf command
+        selected_action=$(printf "%b" "$options" | fzf --prompt="Talos ($NODE_IP) > " --header="[Enter] to select, [Ctrl-C] or select '[Exit]' to quit" --height=~60% --no-sort)
+        set -e # Re-enable exit-on-error
+
+        case "$selected_action" in
+            "Containers - Status") handle_containers ;;
+            "Dashboard (type 'q' to exit)") handle_dashboard ;;
+            "Dmesg") handle_dmesg ;;
+            "File browser") handle_file_browser ;;
+            "Containers - Logs") handle_container_logs ;;
+            "Services - Logs") handle_service_logs ;;
+            "Processes") handle_processes ;;
+            "Mounts") handle_mounts ;;
+            "Netstat") handle_netstat ;;
+            "Services - Status") handle_services_status ;;
+            "[Exit]" | "") exit 0 ;; 
+        esac
+    done
+fi
