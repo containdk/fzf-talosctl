@@ -12,19 +12,46 @@ for cmd in talosctl kubectl fzf stdbuf; do
     fi
 done
 
+# --- Talosconfig Determination ---
+# Inform the user which talosconfig file is being used. This follows the same
+# logic as talosctl: it prefers the TALOSCONFIG environment variable, and
+# falls back to the default path if the variable is not set.
+TALOSCONFIG_FILE="${TALOSCONFIG:-$HOME/.talos/config}"
+echo "Using talosconfig: $TALOSCONFIG_FILE" >&2
+
 # --- Node IP Determination ---
 NODE_IP=""
 if [ -n "${1-}" ]; then
     # Mode 1: IP is provided as a command-line argument (e.g., from K9s).
     NODE_IP="$1"
+
+    # Perform a quick check to ensure the node is accessible with the current talosconfig.
+    if ! talosctl -n "$NODE_IP" version >/dev/null 2>&1; then
+        echo "Error: Unable to connect to node $NODE_IP with current talosconfig." >&2
+        echo "Please check your talosconfig and network connectivity." >&2
+        exit 1
+    fi
 else
-    # Mode 2: Interactive node selection using fzf.
-    echo "No node IP provided. Fetching nodes from current kubectl context..." >&2
+    # Mode 2: Interactive node selection using fzf. First, get the kubeconfig
+    # from the current talosconfig to ensure we query the correct cluster.
+    echo "Extracting kubeconfig from current talosconfig..." >&2
+    
+    TEMP_KUBECONFIG=$(mktemp)
+    # Ensure the temporary kubeconfig is cleaned up on script exit.
+    trap 'rm -f "$TEMP_KUBECONFIG"' EXIT
+
+    if ! talosctl kubeconfig "$TEMP_KUBECONFIG" >/dev/null 2>&1; then
+        echo "Error: Failed to get kubeconfig from talosctl." >&2
+        echo "Please ensure your talosconfig is configured correctly." >&2
+        exit 1
+    fi
+
+    echo "Fetching nodes from the cluster defined in talosconfig..." >&2
 
     # Get the list of nodes, skipping the header line for fzf processing.
-    node_list=$(kubectl get nodes -o wide | tail -n +2)
+    node_list=$(KUBECONFIG="$TEMP_KUBECONFIG" kubectl get nodes -o wide | tail -n +2)
     if [ -z "$node_list" ]; then
-        echo "Error: No nodes found in the current kubectl context." >&2
+        echo "Error: No nodes found in the cluster defined by your talosconfig." >&2
         exit 1
     fi
 
@@ -32,7 +59,7 @@ else
     # The header from `kubectl` is provided to fzf for context.
     set +e # Temporarily disable exit-on-error for the interactive fzf command
     selected_node_line=$(echo "$node_list" | fzf --prompt="Select Node > " \
-        --header="$(kubectl get nodes -o wide | head -n 1)" \
+        --header="$(KUBECONFIG="$TEMP_KUBECONFIG" kubectl get nodes -o wide | head -n 1)" \
         --header-first)
     set -e # Re-enable exit-on-error
 
