@@ -41,8 +41,8 @@ else
         exit 0
     fi
 
-    # Extract the INTERNAL-IP (6th column) from the selected line.
-    # This might need adjustment if your `kubectl get nodes -o wide` output is different.
+    # Extract the INTERNAL-IP (typically the 6th column) from the selected line.
+    # This assumes the standard output format of `kubectl get nodes -o wide`.
     NODE_IP=$(echo "$selected_node_line" | awk '{print $6}')
 fi
 
@@ -58,10 +58,8 @@ _view_streaming_logs() {
     local talos_cmd=("$@")
 
     # Start the log command as a managed coprocess. `stdbuf -o0` disables
-    # output buffering, ensuring logs appear in fzf immediately.
-    # When fzf exits (e.g., via ESC), the `talosctl` process in the pipeline
-    # does not always terminate correctly, causing the script to hang.
-    # Using a coprocess with an explicit `trap` ensures it is always killed.
+    # output buffering for a real-time feel. The coprocess runs the command
+    # in the background and gives us its PID for later management.
     coproc TALOS_LOGS { stdbuf -o0 "${talos_cmd[@]}"; }
 
     # Run fzf, reading its input from the coprocess's output stream.
@@ -76,8 +74,8 @@ _view_streaming_logs() {
         --bind 'ctrl-j:top,ctrl-t:toggle-track' <&"${TALOS_LOGS[0]}"
     set -e # Re-enable exit-on-error
 
-    # Manually kill the background log process after fzf exits. This is more explicit
-    # and robust than using a `trap` on RETURN, which was causing navigation issues.
+    # After fzf exits, explicitly kill the background log process to prevent
+    # it from hanging and keeping the script alive.
     kill "${TALOS_LOGS_PID}" &>/dev/null
 }
 
@@ -93,7 +91,7 @@ handle_service_logs() {
       return 1
     fi
 
-    # Remove "[Back]" option, rely on ESC for returning
+    # The user can press ESC to return to the main menu.
     service_options="$service_list"
 
     set +e # Temporarily disable exit-on-error for the interactive fzf command
@@ -125,7 +123,7 @@ handle_container_logs() {
       return 1
     fi
 
-    # Remove "[Back]" option, rely on ESC for returning
+    # The user can press ESC to return to the main menu.
     container_options="$container_list"
     fzf_header=$(echo "$container_output" | head -n 1)
 
@@ -150,7 +148,7 @@ handle_container_logs() {
 # --- Function for Containers Sub-menu ---
 handle_containers() {
     while true; do
-        local options="Kubernetes Containers\nSystem Containers" # Removed "[Back]", rely on ESC
+        local options="Kubernetes Containers\nSystem Containers"
         local selected_view
 
         set +e # Temporarily disable exit-on-error for the interactive fzf command
@@ -159,8 +157,8 @@ handle_containers() {
         set -e # Re-enable exit-on-error
 
         if [ "$exit_code" -ne 0 ]; then # User pressed ESC or Ctrl-C
-            return 0
-        fi # This now handles the "back" action for this menu
+            return 0 # Return to the main menu.
+        fi
 
         case "$selected_view" in
             "Kubernetes Containers")
@@ -173,17 +171,15 @@ handle_containers() {
                 (set +o pipefail; talosctl -n "$NODE_IP" containers | fzf --prompt="System Containers > " --header-lines=1 --header="[ESC] to return")
                 set -e
                 ;;
-            "") return 0 ;; # Should not be reached if exit_code handles ESC
+            "") return 0 ;; # This case is unlikely if fzf exits with a non-zero code on ESC.
         esac
     done
 }
 
 # --- Function for Dmesg Sub-menu ---
 handle_dmesg() {
-    # The dmesg viewer now behaves like the other log viewers, providing a live stream
-    # by using `dmesg --follow`. This replaces the previous static, sortable view.
-    # The interactive sorting feature is not compatible with a live stream in this
-    # script's architecture, but the new behavior is consistent with other log views.
+    # Provides a live stream of kernel messages using 'talosctl dmesg --follow',
+    # leveraging the generic streaming log viewer.
     _view_streaming_logs "Dmesg > " talosctl -n "$NODE_IP" dmesg --follow
 }
 
@@ -305,7 +301,8 @@ _get_file_list() {
     local path="$1"
     local key="$2"
     local order="$3"
-    # Removed --size-in-bytes for compatibility with older talosctl versions.
+    # The `list` command is used without `--size-in-bytes` to maintain
+    # compatibility with a wider range of talosctl versions.
     local cmd="talosctl -n $NODE_IP list -l -t d,f,l \"$path\" 2>/dev/null | tail -n +2"
 
     if [ "$key" = "name" ]; then
@@ -316,7 +313,7 @@ _get_file_list() {
     elif [ "$key" = "size" ]; then
         # For size sorting, we convert human-readable sizes to bytes using awk,
         # sort numerically, and then remove the temporary byte column.
-        # This is compatible with BSD/macOS sort and older talosctl versions.
+        # This approach is compatible with both GNU and BSD/macOS versions of sort.
         cmd="$cmd | awk '{
             size = \$5; # SIZE is the 5th column.
             val = substr(size, 1, length(size)-1);
@@ -353,8 +350,8 @@ _get_item_name() {
 handle_file_browser() {
     local current_path="/"
     local sort_key="name"
-    # Default to 'r' (reverse). In some environments, this is necessary to
-    # achieve a standard A-Z alphabetical sort.
+    # Default to 'r' (reverse). In some environments, this provides a more
+    # natural A-Z alphabetical sort.
     local sort_order="r"
 
     while true;
@@ -374,8 +371,8 @@ handle_file_browser() {
             fi
         fi
 
-        # Display ".." at the top and "[Exit]" at the very bottom of the list.
-        local options="..\n$file_list" # Removed "[Exit]", rely on ESC from root for main menu
+        # Prepend ".." to the list to allow navigating up the directory tree.
+        local options="..\n$file_list"
         local output
         
         export -f _get_item_name
@@ -443,7 +440,7 @@ handle_file_browser() {
                             current_path="$current_path/$item_name"
                         fi
                     elif [[ -n "$selected_item" && ( "$item_type" == -* || "$item_type" == l* ) ]]; then
-                        # It's a file, so we view it.
+                        # It's a file or symlink, so we view its contents.
                         # This is done outside of a command substitution to give `less` proper terminal control.
                         local file_path; [ "$current_path" = "/" ] && file_path="/$item_name" || file_path="$current_path/$item_name"
                         set +e # Temporarily disable exit-on-error for the interactive `less` command.
@@ -479,7 +476,7 @@ handle_processes() {
     while true; do
         local sort_awk_script=""
         if [ -n "$sort_key" ]; then
-            # Awk function to convert human-readable memory sizes (e.g., "1.5 GB", "287 MB") to bytes
+            # Awk function to convert human-readable memory sizes (e.g., "1.5 GB") to bytes for sorting.
             # SC2016: Expressions don't expand in single quotes. This is intentional for awk.
             # shellcheck disable=SC2016
             sort_awk_script='
@@ -580,7 +577,7 @@ handle_processes() {
             'ctrl-c') if [ "$sort_key" = "cpu_time" ]; then [ -z "$sort_order" ] && sort_order="r" || sort_order=""; else sort_key="cpu_time"; sort_order=""; fi ;;
             'ctrl-v') if [ "$sort_key" = "virtmem" ]; then [ -z "$sort_order" ] && sort_order="r" || sort_order=""; else sort_key="virtmem"; sort_order=""; fi ;;
             'ctrl-r') if [ "$sort_key" = "resmem" ]; then [ -z "$sort_order" ] && sort_order="r" || sort_order=""; else sort_key="resmem"; sort_order=""; fi ;;
-            *) return 0 ;; # Enter was pressed on a line, or unhandled key
+            *) return 0 ;; # Enter was pressed on a line, or an unhandled key was used.
         esac
     done
 }
