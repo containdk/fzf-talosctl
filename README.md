@@ -42,7 +42,7 @@ Before using `fzf-talosctl`, make sure you have the following command-line tools
 
 ## Installation
 
-1.  Clone this repository or download the `fzf-talosctl` script.
+1.  Clone this [repository](https://github.com/containdk/fzf-talosctl.git) or download the `fzf-talosctl` script.
 2.  Make the script executable:
     ```sh
     chmod +x fzf-talosctl
