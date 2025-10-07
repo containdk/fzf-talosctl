@@ -37,7 +37,7 @@ jobs:
           tar -czvf fzf-talosctl-${{ github.ref_name }}.tar.gz -C dist .
 
       - name: Create GitHub Release and Upload Asset
-        uses: softprops/action-gh-release@6cbd405e2c4e67a21c47fa9e383d020e4e28b836 # v2
+        uses: softprops/action-gh-release@aec2ec56f94eb8180ceec724245f64ef008b89f5 # v2
         with:
           # This action will create a new release on GitHub.
           # The body of the release notes will be automatically generated from your commit history.
