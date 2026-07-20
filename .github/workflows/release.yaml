@@ -16,7 +16,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Package fzf-talosctl script
         run: |
@@ -37,7 +37,7 @@ jobs:
           tar -czvf fzf-talosctl-${{ github.ref_name }}.tar.gz -C dist .
 
       - name: Create GitHub Release and Upload Asset
-        uses: softprops/action-gh-release@6da8fa9354ddfdc4aeace5fc48d7f679b5214090 # v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           # This action will create a new release on GitHub.
           # The body of the release notes will be automatically generated from your commit history.
